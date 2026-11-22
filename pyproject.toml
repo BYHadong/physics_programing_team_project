@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "physics_programing_team_project"
+version = "0.1.0"
+description = "물리와 프로그래밍 6조 팀 프로젝트 - 물리 및 인공지능 기반 고양이 이미지 분류 / 물리 시뮬레이션 모델"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "Team 6", email = "team6@example.com" }
+]
+dependencies = [
+    "numpy>=1.26.0",
+    "scipy>=1.12.0",
+    "pandas>=2.2.0",
+    "matplotlib>=3.8.0",
+    "Pillow>=10.2.0",
+    "scikit-learn>=1.4.0",
+    "python-dotenv>=1.0.1",
+    "tqdm>=4.66.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.3.0",
+    "jupyterlab>=4.1.0",
+    "ipykernel>=6.29.0",
+]
+deeplearning = [
+    "torch>=2.2.0",
+    "torchvision>=0.17.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
