@@ -37,11 +37,13 @@ env/
 */.ipynb_checkpoints/*
 
 # Data and large files (Google Drive sync target)
+데이터/
 data/raw/*
 data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 checkpoints/
+outputs/
 *.pt
 *.pth
 *.onnx
