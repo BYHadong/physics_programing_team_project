@@ -136,6 +136,66 @@ def extract_embeddings(
     return np.vstack(chunks).astype(np.float32)
 
 
+def extract_augmented_main_embeddings(
+    model: torch.nn.Module,
+    main_records: List[Dict],
+    processed_dir: Path,
+    target_count: int,
+    img_size: int,
+    batch_size: int,
+    device: torch.device,
+    enable_hflip: bool = True,
+    seed: int = RANDOM_SEED,
+) -> np.ndarray:
+    """
+    main_siamese_cat 학습 레코드에 클린 + 온라인 증강(RandomResizedCrop, Flip, Rotation, ColorJitter,
+    GaussianBlur, JPEG 압축)을 적용해 정확히 target_count(기본 500장)개의 임베딩을 추출합니다.
+
+    매개변수:
+        model: 동결된 백본 모델
+        main_records: 학습 세트의 main_siamese_cat 레코드 목록
+        processed_dir: 전처리 이미지 폴더 경로
+        target_count: 목표로 하는 총 양성(main) 학습 임베딩 수
+        img_size: 모델 입력 해상도
+        batch_size: 배치 크기
+        device: 연산 장치
+        enable_hflip: 좌우 반전 증강 사용 여부
+        seed: 증강 샘플링 재현용 난수 시드
+
+    반환값:
+        shape (target_count, D)의 L2 정규화된 float32 임베딩 행렬
+    """
+    if not main_records:
+        raise ValueError("증강할 main_siamese_cat 학습 레코드가 비어 있습니다.")
+
+    classes = sorted(list(GDRIVE_CATEGORIES.keys()))
+    eval_tf = build_transforms(image_size=img_size, is_train=False)
+    clean_ds = ManifestCatDataset(
+        main_records, processed_dir=processed_dir, transform=eval_tf, classes=classes
+    )
+    clean_embs = extract_embeddings(model, clean_ds, batch_size=batch_size, device=device)
+
+    if target_count <= len(main_records):
+        return clean_embs[:target_count]
+
+    need = target_count - len(main_records)
+    rng = random.Random(seed)
+    aug_records: List[Dict] = []
+    while len(aug_records) < need:
+        shuffled = list(main_records)
+        rng.shuffle(shuffled)
+        aug_records.extend(shuffled)
+    aug_records = aug_records[:need]
+
+    set_seed(seed)
+    train_tf = build_transforms(image_size=img_size, is_train=True, enable_hflip=enable_hflip)
+    aug_ds = ManifestCatDataset(
+        aug_records, processed_dir=processed_dir, transform=train_tf, classes=classes
+    )
+    aug_embs = extract_embeddings(model, aug_ds, batch_size=batch_size, device=device)
+    return np.vstack([clean_embs, aug_embs]).astype(np.float32)
+
+
 def compute_evaluation_metrics(
     y_true_bin: np.ndarray,
     y_class_idx: np.ndarray,
@@ -204,11 +264,14 @@ def evaluate_backbone_cv(
     processed_dir: Path,
     device: torch.device,
     batch_size: int = BATCH_SIZE,
-    aug_passes: int = 7,
+    main_target_count: int = 500,
+    neg_aug_passes: int = 1,
     enable_hflip: bool = True,
 ) -> Dict:
     """
     단일 백본에 대해 5-Fold Group CV로 prototype_cosine과 linear_probe 성능을 평가합니다.
+    각 Fold의 학습 세트 내부에서만 main_siamese_cat을 main_target_count(기본 500장)까지
+    증강 확장하여 검증 데이터 누수를 방지합니다.
 
     매개변수:
         backbone_key: BACKBONE_MODELS의 모델 키
@@ -217,14 +280,15 @@ def evaluate_backbone_cv(
         processed_dir: 전처리 이미지 폴더 경로
         device: 연산 장치
         batch_size: 배치 크기
-        aug_passes: 온라인 증강 임베딩 패스 횟수
+        main_target_count: Fold별 학습용 main_siamese_cat 증강 목표 수량
+        neg_aug_passes: 음성 클래스(other/etc) 추가 증강 패스 횟수
         enable_hflip: 좌우 반전 증강 사용 여부
 
     반환값:
         백본 및 방식별 OOF/Fold 평균 성능 딕셔너리
     """
     model_id = BACKBONE_MODELS.get(backbone_key, backbone_key)
-    print(f"\n[백본 평가 시작] {backbone_key} ({model_id})")
+    print(f"\n[백본 평가 시작] {backbone_key} ({model_id}) | main 증강 목표={main_target_count}장")
     model, img_size = load_backbone(backbone_key, device)
 
     classes = sorted(list(GDRIVE_CATEGORIES.keys()))
@@ -233,17 +297,18 @@ def evaluate_backbone_cv(
     y_bin_all = np.array([1 if r["class_name"] == "main_siamese_cat" else 0 for r in records])
     y_cls_all = np.array([classes.index(r["class_name"]) for r in records])
 
-    # 백본이 동결(Frozen)되어 있으므로 이미지별 클린/증강 임베딩을 1회씩 사전 추출
+    # 클린 임베딩 및 음성 클래스용 증강 패스 사전 추출
     eval_tf = build_transforms(image_size=img_size, is_train=False)
     train_tf = build_transforms(image_size=img_size, is_train=True, enable_hflip=enable_hflip)
 
     clean_ds = ManifestCatDataset(records, processed_dir=processed_dir, transform=eval_tf, classes=classes)
     clean_embs = extract_embeddings(model, clean_ds, batch_size=batch_size, device=device)
 
-    aug_embs_list: List[np.ndarray] = []
-    aug_ds = ManifestCatDataset(records, processed_dir=processed_dir, transform=train_tf, classes=classes)
-    for _ in range(aug_passes):
-        aug_embs_list.append(extract_embeddings(model, aug_ds, batch_size=batch_size, device=device))
+    neg_aug_list: List[np.ndarray] = []
+    if neg_aug_passes > 0:
+        aug_ds = ManifestCatDataset(records, processed_dir=processed_dir, transform=train_tf, classes=classes)
+        for _ in range(neg_aug_passes):
+            neg_aug_list.append(extract_embeddings(model, aug_ds, batch_size=batch_size, device=device))
 
     oof_proto = np.zeros(len(records), dtype=np.float32)
     oof_linear = np.zeros(len(records), dtype=np.float32)
@@ -254,16 +319,29 @@ def evaluate_backbone_cv(
     other_idx = classes.index("other_siamese_cat")
 
     for fold_idx, (tr_recs, val_recs) in enumerate(folds):
-        tr_indices = np.array([rel_to_idx[r["processed_rel_path"]] for r in tr_recs], dtype=np.int64)
         val_indices = np.array([rel_to_idx[r["processed_rel_path"]] for r in val_recs], dtype=np.int64)
 
-        tr_main_indices = tr_indices[y_bin_all[tr_indices] == 1]
+        tr_main_recs = [r for r in tr_recs if r["class_name"] == "main_siamese_cat"]
+        tr_neg_indices = np.array(
+            [rel_to_idx[r["processed_rel_path"]] for r in tr_recs if r["class_name"] != "main_siamese_cat"],
+            dtype=np.int64,
+        )
 
-        # 방식 A: Prototype Cosine Similarity (클린 1회 + 증강 4회)
-        proto_pool = [clean_embs[tr_main_indices]] + [
-            ae[tr_main_indices] for ae in aug_embs_list[:4]
-        ]
-        proto_vec = np.vstack(proto_pool).mean(axis=0)
+        # 학습 세트의 main_siamese_cat만 온라인 증강으로 main_target_count(500장)까지 확장
+        tr_main_embs = extract_augmented_main_embeddings(
+            model=model,
+            main_records=tr_main_recs,
+            processed_dir=processed_dir,
+            target_count=main_target_count,
+            img_size=img_size,
+            batch_size=batch_size,
+            device=device,
+            enable_hflip=enable_hflip,
+            seed=RANDOM_SEED + fold_idx,
+        )
+
+        # 방식 A: Prototype Cosine Similarity (증강된 500장 평균 임베딩)
+        proto_vec = tr_main_embs.mean(axis=0)
         proto_norm = np.linalg.norm(proto_vec)
         if proto_norm > 0:
             proto_vec = proto_vec / proto_norm
@@ -272,9 +350,13 @@ def evaluate_backbone_cv(
         proto_scores = val_embs @ proto_vec
         oof_proto[val_indices] = proto_scores
 
-        # 방식 B: Linear Probe (클린 + 전체 증강 패스 + balanced class weight)
-        tr_embs_stacked = np.vstack([clean_embs[tr_indices]] + [ae[tr_indices] for ae in aug_embs_list])
-        tr_labels_stacked = np.tile(y_bin_all[tr_indices], 1 + len(aug_embs_list))
+        # 방식 B: Linear Probe (main 500장 + 음성 클래스 클린/증강 + balanced class weight)
+        tr_neg_embs = np.vstack([clean_embs[tr_neg_indices]] + [na[tr_neg_indices] for na in neg_aug_list])
+        tr_embs_stacked = np.vstack([tr_main_embs, tr_neg_embs])
+        tr_labels_stacked = np.concatenate([
+            np.ones(len(tr_main_embs), dtype=np.int64),
+            np.zeros(len(tr_neg_embs), dtype=np.int64),
+        ])
 
         clf = LogisticRegression(
             class_weight="balanced",
@@ -309,34 +391,50 @@ def evaluate_backbone_cv(
             "prototype_cosine": proto_metrics,
             "linear_probe": linear_metrics,
         },
-        "_cache": (clean_embs, aug_embs_list, y_bin_all, img_size),
+        "_cache": (model, clean_embs, neg_aug_list, y_bin_all, img_size),
     }
 
 
 def train_and_save_best_model(
     best_entry: Dict,
     best_method: str,
+    records: List[Dict],
+    processed_dir: Path,
+    device: torch.device,
+    main_target_count: int = 500,
+    enable_hflip: bool = True,
     checkpoint_path: Path = CHECKPOINTS_DIR / "best_baseline.pt",
 ) -> None:
     """
-    가장 우수한 백본/방식을 전체 데이터로 재학습해 체크포인트(.pt)로 저장합니다.
-
-    매개변수:
-        best_entry: evaluate_backbone_cv() 반환 결과 중 최고 성능 백본 딕셔너리
-        best_method: 'prototype_cosine' 또는 'linear_probe'
-        checkpoint_path: 저장할 체크포인트 경로
+    가장 우수한 백본/방식을 전체 데이터(main_siamese_cat 500장 증강 포함)로
+    재학습해 체크포인트(.pt)로 저장합니다.
     """
-    clean_embs, aug_embs_list, y_bin_all, img_size = best_entry["_cache"]
-    main_mask = y_bin_all == 1
+    model, clean_embs, neg_aug_list, y_bin_all, img_size = best_entry["_cache"]
+    main_records = [r for r in records if r["class_name"] == "main_siamese_cat"]
+    neg_mask = y_bin_all == 0
 
-    proto_pool = [clean_embs[main_mask]] + [ae[main_mask] for ae in aug_embs_list[:4]]
-    proto_vec = np.vstack(proto_pool).mean(axis=0)
+    all_main_embs = extract_augmented_main_embeddings(
+        model=model,
+        main_records=main_records,
+        processed_dir=processed_dir,
+        target_count=main_target_count,
+        img_size=img_size,
+        batch_size=BATCH_SIZE,
+        device=device,
+        enable_hflip=enable_hflip,
+        seed=RANDOM_SEED,
+    )
+    proto_vec = all_main_embs.mean(axis=0)
     proto_norm = np.linalg.norm(proto_vec)
     if proto_norm > 0:
         proto_vec = proto_vec / proto_norm
 
-    all_embs_stacked = np.vstack([clean_embs] + aug_embs_list)
-    all_labels_stacked = np.tile(y_bin_all, 1 + len(aug_embs_list))
+    all_neg_embs = np.vstack([clean_embs[neg_mask]] + [na[neg_mask] for na in neg_aug_list])
+    all_embs_stacked = np.vstack([all_main_embs, all_neg_embs])
+    all_labels_stacked = np.concatenate([
+        np.ones(len(all_main_embs), dtype=np.int64),
+        np.zeros(len(all_neg_embs), dtype=np.int64),
+    ])
 
     clf = LogisticRegression(
         class_weight="balanced",
@@ -353,6 +451,7 @@ def train_and_save_best_model(
         "image_size": img_size,
         "preprocessed_size": PREPROCESSED_SIZE,
         "method": best_method,
+        "main_target_count": main_target_count,
         "threshold": float(best_metrics["threshold"]),
         "prototype": proto_vec.astype(np.float32),
         "linear_coef": clf.coef_[0].astype(np.float32),
@@ -361,14 +460,15 @@ def train_and_save_best_model(
     }
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, checkpoint_path)
-    print(f"\n[체크포인트 저장 완료] {checkpoint_path}")
+    print(f"\n[체크포인트 저장 완료] {checkpoint_path} (main={main_target_count}장 확장 적용)")
 
 
 def run_baseline_comparison(
     model_keys: List[str],
     manifest_path: Path = PROCESSED_DATA_DIR / "manifest.json",
     processed_dir: Path = PROCESSED_DATA_DIR,
-    aug_passes: int = 7,
+    main_target_count: int = 500,
+    neg_aug_passes: int = 1,
     enable_hflip: bool = True,
 ) -> Dict:
     """
@@ -386,7 +486,10 @@ def run_baseline_comparison(
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     gpu_name = torch.cuda.get_device_name(0) if device.type == "cuda" else "CPU"
-    print(f"[학습 환경] Device: {device} ({gpu_name}) | 총 샘플: {len(records)}장 | Seed: {RANDOM_SEED}")
+    print(
+        f"[학습 환경] Device: {device} ({gpu_name}) | 총 샘플: {len(records)}장 | "
+        f"main 증강 목표: {main_target_count}장 | Seed: {RANDOM_SEED}"
+    )
 
     folds = create_group_folds(records, n_splits=5, seed=RANDOM_SEED)
     print("\n=== 5-Fold Group CV 분할 검증 ===")
@@ -396,7 +499,7 @@ def run_baseline_comparison(
         va_other_ids = sorted({r["individual_id"] for r in va if r["class_name"] == "other_siamese_cat"})
         va_etc = sum(1 for r in va if r["class_name"] == "etc_cats")
         print(
-            f"  Fold {idx + 1}: Train={len(tr):4d} (main={tr_main}) | "
+            f"  Fold {idx + 1}: Train={len(tr):4d} (main={tr_main} -> 증강 {main_target_count}장) | "
             f"Val={len(va):3d} (main={va_main}, other_ids={len(va_other_ids)}개, etc={va_etc})"
         )
 
@@ -408,7 +511,8 @@ def run_baseline_comparison(
             folds=folds,
             processed_dir=processed_dir,
             device=device,
-            aug_passes=aug_passes,
+            main_target_count=main_target_count,
+            neg_aug_passes=neg_aug_passes,
             enable_hflip=enable_hflip,
         )
         evaluated.append(res)
@@ -426,12 +530,22 @@ def run_baseline_comparison(
                 best_method = method_name
 
     assert best_entry is not None
-    train_and_save_best_model(best_entry, best_method)
+    train_and_save_best_model(
+        best_entry=best_entry,
+        best_method=best_method,
+        records=records,
+        processed_dir=processed_dir,
+        device=device,
+        main_target_count=main_target_count,
+        enable_hflip=enable_hflip,
+    )
 
     # JSON 직렬화를 위해 _cache 제거
     serializable_results = {
         "device": f"{device} ({gpu_name})",
         "total_samples": len(records),
+        "main_target_count": main_target_count,
+        "neg_aug_passes": neg_aug_passes,
         "best_model": {
             "backbone_key": best_entry["backbone_key"],
             "backbone_id": best_entry["backbone_id"],
@@ -485,13 +599,25 @@ def main() -> None:
         choices=list(BACKBONE_MODELS.keys()),
         help="평가할 백본 키 목록",
     )
-    parser.add_argument("--aug-passes", type=int, default=7, help="온라인 증강 반복 추출 횟수")
+    parser.add_argument(
+        "--main-target-count",
+        type=int,
+        default=500,
+        help="각 Fold 학습 시 main_siamese_cat 온라인 증강 목표 수량 (기본 500)",
+    )
+    parser.add_argument(
+        "--neg-aug-passes",
+        type=int,
+        default=1,
+        help="음성 클래스(other/etc) 추가 증강 패스 횟수 (기본 1)",
+    )
     parser.add_argument("--no-hflip", action="store_true", help="좌우 반전 증강 비활성화")
     args = parser.parse_args()
 
     run_baseline_comparison(
         model_keys=args.models,
-        aug_passes=args.aug_passes,
+        main_target_count=args.main_target_count,
+        neg_aug_passes=args.neg_aug_passes,
         enable_hflip=not args.no_hflip,
     )
 

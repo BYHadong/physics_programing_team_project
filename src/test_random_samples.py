@@ -202,9 +202,14 @@ def fit_holdout_checkpoint(
 def save_result_grid(results: List[Dict], output_path: Path) -> None:
     """
     추론 결과와 크롭된 이미지를 정돈된 그리드 PNG 파일로 저장합니다.
+    - T:MAIN, P:MAIN 인 경우에만 초록색 테두리, 나머지는 빨간색 테두리 적용
+    - 3행 배치 시 각 행 왼쪽에 'Main 사진', 'Other 사진', 'ETC 사진' 라벨 표시
     """
     if not results:
         return
+
+    plt.rcParams["font.family"] = "Malgun Gothic"
+    plt.rcParams["axes.unicode_minus"] = False
 
     n_total = len(results)
     # 클래스당 10장씩 3클래스(30장)일 경우 깔끔하게 3행 x 10열로 배치
@@ -212,18 +217,23 @@ def save_result_grid(results: List[Dict], output_path: Path) -> None:
     for r in results:
         class_counts[r["true_class"]] += 1
 
-    if len(class_counts) == 3 and len(set(class_counts.values())) == 1 and n_total <= 36:
+    is_three_row_grid = (
+        len(class_counts) == 3 and len(set(class_counts.values())) == 1 and n_total <= 36
+    )
+    if is_three_row_grid:
         cols = next(iter(class_counts.values()))
         rows = 3
     else:
         cols = min(10, n_total)
         rows = math.ceil(n_total / cols)
 
-    fig, axes = plt.subplots(rows, cols, figsize=(cols * 2.4, rows * 2.8))
+    fig, axes = plt.subplots(rows, cols, figsize=(cols * 2.4 + 1.2, rows * 2.8))
     axes_flat = np.atleast_1d(axes).ravel()
 
     for ax in axes_flat:
         ax.axis("off")
+
+    row_labels = ["Main 사진", "Other 사진", "ETC 사진"]
 
     for idx, res in enumerate(results):
         ax = axes_flat[idx]
@@ -234,7 +244,8 @@ def save_result_grid(results: List[Dict], output_path: Path) -> None:
         true_abbr = CLASS_ABBR.get(res["true_class"], res["true_class"])
         pred_abbr = "MAIN" if res["pred_is_main"] else "OTHER"
         status = "OK" if res["correct"] else "WRONG"
-        color = "#1b7f3a" if res["correct"] else "#c92a2a"
+        is_tp_main = (res["true_class"] == "main_siamese_cat") and bool(res["pred_is_main"])
+        color = "#1b7f3a" if is_tp_main else "#c92a2a"
 
         ax.set_title(
             f"T:{true_abbr} | P:{pred_abbr}\np={res['probability']:.2f} ({status})",
@@ -243,13 +254,26 @@ def save_result_grid(results: List[Dict], output_path: Path) -> None:
             fontweight="bold",
             pad=4,
         )
-        # 테두리를 다시 켜서 정답/오답 색상 프레임 표시
+        # 테두리를 다시 켜서 T:MAIN & P:MAIN은 초록색, 나머지는 빨간색 프레임 표시
         ax.set_axis_on()
         ax.set_xticks([])
         ax.set_yticks([])
         for spine in ax.spines.values():
             spine.set_edgecolor(color)
             spine.set_linewidth(2.5)
+
+        if is_three_row_grid and (idx % cols == 0):
+            row_idx = idx // cols
+            if row_idx < len(row_labels):
+                ax.set_ylabel(
+                    row_labels[row_idx],
+                    rotation=0,
+                    ha="right",
+                    va="center",
+                    fontsize=12,
+                    fontweight="bold",
+                    labelpad=12,
+                )
 
     plt.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
