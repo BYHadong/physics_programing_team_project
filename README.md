@@ -238,3 +238,15 @@ Pop-Location
 ```
 
 원본 이미지, 체크포인트, 임베딩 캐시와 상세 감사 파일은 Drive 또는 로컬 출력 경로에서 관리합니다. 결과 ZIP의 전체 내용은 로컬 `outputs/results/dinov2-duplicate-fix-1121-01/`에 풀었습니다.
+
+### Windows 로컬 검증 기록
+
+Colab에서 모델 학습과 평가를 완료했습니다. 이전 Windows 검증에서 실험 단위 테스트는 29개 중 26개가 통과했고, 아래 세 테스트는 임베딩 캐시 파일을 쓰는 단계에서 중단됐습니다. pytest 임시 경로에 두 개의 해시 디렉터리와 임시 파일명이 붙어 Windows 경로 길이 제한에 걸렸고, 파일을 열 때 `FileNotFoundError`가 발생했습니다.
+
+| 실패한 테스트 | 실패 지점 |
+| --- | --- |
+| `test_hyperparameters.py::test_pipeline_resume_and_inference` | 합성 데이터로 파이프라인을 시작할 때 기본 임베딩 캐시 임시 파일을 열지 못함 |
+| `test_hyperparameters.py::test_generalization_pipeline_and_test_modes` | 일반화 실험에서 첫 임베딩 캐시 임시 파일을 열지 못함 |
+| `test_study_release.py::test_cache_legacy_shards_and_partial_data_revision` | 기존 캐시를 읽은 뒤 새 캐시 조각의 임시 파일을 열지 못함 |
+
+별도 기존 프로젝트 테스트는 Windows 보안 정책에 따른 Python 확장 모듈 로딩 오류로 수집 단계에서 중단됐습니다. 이번 확인에는 Python 표준 라이브러리만 사용해 ZIP 무결성, 소스 해시, CSV·JSON 지표와 노트북 셀을 대조했습니다.
