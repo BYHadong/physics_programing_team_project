@@ -1,0 +1,9 @@
+{
+  "elapsed_seconds": 837.914038916,
+  "recorded_candidate_seconds": 741.8328227470001,
+  "report_rows": 57,
+  "cumulative_unique_cv": 45,
+  "cv_trained_in_this_process": 45,
+  "rows_resumed_in_this_process": 0,
+  "scope": "this process including cache hits"
+}

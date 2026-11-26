@@ -1,0 +1,6 @@
+*.py text eol=lf
+*.toml text eol=lf
+requirements.txt text eol=lf
+results/**/*.csv text eol=crlf
+results/**/*.json text eol=lf
+results/**/*.txt text eol=lf

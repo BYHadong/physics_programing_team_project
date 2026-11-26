@@ -1,0 +1,31 @@
+{
+  "signature": "75440656d74b615e996d39a45b062573a06241b4b9329173f5cfb6002ce10ef4",
+  "batches": {
+    "224": 32,
+    "336": 8,
+    "448": 4
+  },
+  "environment": {
+    "python": "3.13.16",
+    "platform": "Linux-6.6.159+-x86_64-with-glibc2.39",
+    "packages": {
+      "numpy": "2.4.6",
+      "Pillow": "11.3.0",
+      "torch": "2.14.1+cu130",
+      "torchvision": "0.29.1+cu130",
+      "timm": "1.0.31",
+      "scikit-learn": "1.6.1",
+      "scipy": "1.16.3",
+      "ultralytics": "8.4.219",
+      "matplotlib": "3.10.0"
+    },
+    "device": "cuda",
+    "cuda": "13.0",
+    "gpu": "Tesla T4",
+    "cuda_capability": [
+      7,
+      5
+    ],
+    "cudnn": 92800
+  }
+}

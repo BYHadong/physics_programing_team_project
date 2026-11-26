@@ -165,3 +165,76 @@ python src/drive_sync.py
 ## 📜 팀 프로젝트 룰 (Rule)
 - 코딩 표준, 물리 단위 표기 규칙, AI 재현성 시드 고정 및 데이터 보안 규칙은 [GEMINI.md](GEMINI.md), [AGENTS.md](AGENTS.md), [.agents/rules/project_rules.md](.agents/rules/project_rules.md)에 정의되어 있습니다.
 - 대용량 데이터(`데이터/`, `data/processed/`, `checkpoints/`, `outputs/`)는 Git에 커밋하지 않고 Google Drive를 통해 동기화합니다.
+
+---
+
+## DINOv2 + Linear Probe 중복 수정 실험
+
+Colab에서 전처리본 1,121장(대상 고양이 87장, 다른 샴고양이 572장, 기타 고양이 462장)을 복원했습니다. 개체 ID 간 복제 충돌을 격리한 뒤 기존 E00–E23을 재평가하고, 추가 탐색과 해상도 비교를 거쳐 R448을 저장했습니다. 실험 ID는 `dinov2-duplicate-fix-1121-01`입니다. 소스 ZIP의 SHA-256이 Colab 로그와 일치하고, 결과의 소스 해시도 배포 명세와 일치합니다. [실험 소스](experiments/dinov2_duplicate_fix/src) · [Colab 노트북](notebooks/dinov2_generalization_duplicate_fix.ipynb) · [결과 표](experiments/dinov2_duplicate_fix/results)
+
+### 모델 구조와 전처리
+
+- 기존 백본 비교에서 다른 샴을 구분하는 Hard ROC-AUC가 가장 높았던 자기지도 사전학습 ViT DINOv2-S/14(`vit_small_patch14_dinov2.lvd142m`)를 사용했습니다. 백본을 동결해 소량 데이터에서 학습할 파라미터 수를 줄이고, 384차원 특징 위에 이진 로지스틱 회귀를 적합했습니다. 대상 고양이가 양성이고, 다른 샴과 기타 고양이가 음성입니다. L2 규제, 클래스 가중치 `balanced`, `lbfgs`, 최대 1,000회를 사용했습니다.
+- EXIF 방향 보정과 RGB 변환을 거쳐 YOLOv8n으로 고양이를 찾아 12% 여백을 두고 크롭합니다. 미탐지 시 원본 전체를 사용합니다. 비율을 유지해 512×512로 패딩하고, 입력 해상도로 리사이즈한 뒤 ImageNet 평균과 표준편차로 정규화합니다. ZIP 복원 시 정상 크롭을 재사용하며 누락·손상된 크롭을 복구할 수 있습니다.
+- 랜덤 크롭, 색상 변화, 회전과 좌우 반전은 각 Fold의 학습용 복사본에만 적용했습니다. 검증과 Holdout에는 리사이즈와 정규화를 적용했습니다.
+
+### 중복 해결과 데이터 분할
+
+1. Manifest 경로와 원본·크롭 파일 및 디코딩 픽셀의 SHA-256을 비교했습니다. 동일 원본이 서로 다른 샴 개체 ID에 들어간 5쌍(10장)을 확인했습니다. 원본·크롭·픽셀 해시를 합해 충돌 증거 15건을 기록했습니다.
+2. 충돌 사진 10장을 학습과 평가에서 격리했습니다. 복제로 연결된 개체들의 나머지 사진은 같은 분할 그룹으로 묶었고, 원본과 이전 결과는 보존했습니다. 격리 후 정확 중복 라벨 충돌은 0건이었습니다.
+3. 대상 고양이는 촬영일 등 확인된 증거로 31개 그룹을 만들고, 다른 샴은 개체 ID를 기준으로 묶었습니다. 이전 Holdout과 연결된 그룹을 개발셋에서 격리했습니다. 남은 1,111장은 개발 917장(57/475/385)과 고정 Holdout 194장(30/87/77)입니다. 괄호 순서는 대상/다른 샴/기타입니다.
+4. 5-Fold `GroupKFold`와 `StratifiedGroupKFold`를 비교해 분할 불균형 점수가 낮은 `GroupKFold`를 채택했습니다(0.0305 대 0.0422). dHash 거리 ≤4와 임베딩 코사인 유사도 ≥0.98에서는 분할 경계를 넘는 후보가 없었습니다. [분할 비교](experiments/dinov2_duplicate_fix/results/splitter_comparison.json) · [유사도 감사](experiments/dinov2_duplicate_fix/results/similarity_review/summary.json)
+
+### 하이퍼파라미터 탐색과 선정
+
+| 항목 | 탐색 설정 | 변경 이유 | 최종 R448 |
+| --- | --- | --- | --- |
+| L2 역규제 강도 `C` | 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0 | 강한 규제의 과적합 억제 효과와 약한 규제의 개체 구분력을 비교 | 0.5 |
+| 양성 목표 수와 증강 횟수 | 원본만, 250, 500, 750, 1,000장. 추가 탐색에서 원본만 0회, 목표 수 지정 시 7회 설정 | 양성 부족을 보완하는 효과와 같은 사진을 반복 변형하는 영향 비교 | 원본만, 0회 |
+| 음성 증강 횟수 | 0, 1, 3, 5, 7회 | 다른 샴과 기타 음성의 다양성을 높여 오탐 및 재현율 변화 확인 | 5회 |
+| 최대 회전 각도 | 0°, 5°, 10°, 15°, 20°, 30° | 촬영 기울기에 대한 강건성과 큰 회전이 외형에 주는 영향 비교 | ±10° |
+| 좌우 반전 확률 | 0, 0.25, 0.5, 0.75, 1.0 | 좌우 자세 변화 대응과 비대칭 무늬 정보의 영향 비교 | 0.75 |
+| 입력 해상도 | 224, 336, 448px | 얼굴과 무늬의 세부 정보가 구분력과 계산 비용에 주는 영향 비교 | 448px |
+| 임계값 정책 | OOF 최대 F1, Precision–Recall 균형, 다른 샴 FPR 목표 1·5·10%와 기존 1.22%, 고정 0.5 | 양성 미탐과 다른 샴 오탐의 균형 비교 | 최대 F1, 0.679063 |
+
+- 시드 42로 기존 24개 ID와 추가 31개 후보를 224px에서 평가했습니다. 항목별 순차 탐색에 C×음성 증강, 양성 목표×회전, 반전×회전 조합을 포함했습니다. 224px 최상위 T29의 설정을 고정해 336·448px를 비교했습니다. 동일 설정을 공유한 행까지 합해 57행이며 고유 CV는 45개였습니다.
+- 개발셋에서 각 검증 Fold의 예측을 합친 OOF 지표로 순위를 정했습니다. 가중치는 Hard AUC 50%, F1 18%, 낮은 다른 샴 FPR 15%, 균형 정확도 7%, Recall 5%, 낮은 Fold별 Hard AUC 표준편차 5%였습니다. T29·R336·R448은 각각 0.8668·0.8951·0.9077을 기록했습니다.
+- R448의 OOF 최대 F1 임계값 0.679063을 고정하고 개발 917장으로 분류기를 적합한 뒤 Holdout을 평가했습니다. OOF에서 다른 샴 FPR 1% 이하 정책을 적용하면 임계값 0.827427, FPR 0.84%, Recall 54.39%였습니다. 최대 F1 정책의 FPR과 Recall은 각각 4.84%, 82.46%였습니다. [선정 결과](experiments/dinov2_duplicate_fix/results/best_hyperparameters.json) · [후보별 결과](experiments/dinov2_duplicate_fix/results/hyperparameter_results.csv) · [해상도 비교](experiments/dinov2_duplicate_fix/results/resolution_comparison.csv)
+
+### 기존 설정과 최종 모델 성능
+
+기준 E00, 기존 튜닝 E15, 최종 R448을 같은 중복 수정 분할에서 비교했습니다. Hard AUC는 대상 고양이와 다른 샴만으로 계산한 ROC-AUC입니다. 다른 샴 FPR은 다른 샴을 대상으로 오인한 비율입니다.
+
+| 평가 | 모델 | 정확도 | Hard AUC | 전체 ROC-AUC | Precision | Recall | F1 | 다른 샴 FPR |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 개발 OOF 917장 | E00 | 95.75% | 0.9161 | 0.9534 | 68.00% | 59.65% | 0.6355 | 3.37% |
+| 개발 OOF 917장 | E15 | 93.68% | 0.8851 | 0.9365 | 49.30% | 61.40% | 0.5469 | 7.58% |
+| 개발 OOF 917장 | R448 | **96.40%** | **0.9581** | **0.9765** | 67.14% | **82.46%** | **0.7402** | 4.84% |
+| 고정 Holdout 194장 | E00 | **97.42%** | **0.9985** | **0.9988** | **90.32%** | 93.33% | **0.9180** | **2.30%** |
+| 고정 Holdout 194장 | E15 | 94.33% | 0.9759 | 0.9852 | 75.68% | 93.33% | 0.8358 | 9.20% |
+| 고정 Holdout 194장 | R448 | **94.85%** | 0.9904 | 0.9945 | 76.32% | **96.67%** | 0.8529 | 9.20% |
+
+R448은 개발 OOF에서 E00보다 Hard AUC와 F1이 높았습니다. 고정 Holdout에서는 184/194장을 맞혔고(TN 155, FP 9, FN 1, TP 29), 균형 정확도는 95.59%, Average Precision은 0.9755였습니다. Holdout에서 E00은 R448보다 정확도가 2.58%p 높고 다른 샴 FPR이 6.90%p 낮았습니다. R448은 대상 고양이 미탐을 E00의 2장에서 1장으로 줄였습니다. [동일 분할 비교](experiments/dinov2_duplicate_fix/results/baseline_comparison.csv) · [최종 지표](experiments/dinov2_duplicate_fix/results/final_model_metrics.json)
+
+### 실험의 한계
+
+- 고정 Holdout은 기존 데이터 안에서 격리한 194장입니다. 대상 30장은 한 그룹에 속했고 다른 샴은 두 분할 그룹뿐이라 그룹 단위 신뢰구간을 산출하지 못했습니다. 독립 촬영 데이터의 성능은 측정되지 않았습니다.
+- dHash 거리 ≤8과 코사인 유사도 ≥0.95에서 각각 Fold 경계를 넘는 미검토 후보가 2쌍씩 남았습니다.
+- 최종 후보와 임계값 선정에 개발 OOF를 사용해 해당 지표에는 탐색의 영향이 포함됩니다. Nested Group CV는 E00/E15 진단에 한정됐습니다. Tesla T4에서 해상도 비교는 448px 약 215초, 224px 약 50초였으며 시간에는 기존 특징 캐시의 영향이 포함됩니다.
+
+### 실행과 테스트
+
+1. [Colab 노트북](notebooks/dinov2_generalization_duplicate_fix.ipynb)을 열고 [검증된 소스 ZIP](experiments/dinov2_duplicate_fix/dinov2_duplicate_fix_source.zip)을 Drive의 `MyDrive/Cat_Project_Backup/dinov2_duplicate_fix_source.zip`에 둡니다. 같은 폴더에 `processed_1121.zip`을 두고 `DATA_ROOT`를 원본 세 클래스 폴더의 공통 상위 경로로 지정합니다.
+2. 저장된 모델 평가에는 셀 1(설정·복원)과 셀 3(평가)을 실행합니다. 체크포인트는 `Cat_Project_Backup/checkpoints/dinov2-duplicate-fix-1121-01/final_model.pt`입니다. 셀 3에서는 단일 이미지(`RUN_SINGLE`, `IMAGE_PATH`), 클래스별 무작위 10장(`RUN_RANDOM`), 고정 Holdout 샘플(`RUN_STRICT`), 고정 Holdout 전체(`RUN_RESERVED`)를 선택할 수 있습니다. 평가만 할 때는 `STRICT_DEVELOPMENT=False`를 유지합니다. 무작위 샘플에는 개발 사진이 포함될 수 있습니다.
+3. 그래프는 결과 ZIP을 Drive의 `Cat_Project_Backup/results/dinov2-duplicate-fix-1121-01/`에 풀고 셀 1과 4를 실행합니다. 셀 2는 학습용입니다. 저장소 노트북은 실행 로그를 담고 있으며 이미지·HTML 출력은 원본 노트북에 있습니다.
+
+로컬에서 기존 가상환경으로 실험 단위 테스트와 CLI 옵션을 확인할 수 있습니다.
+
+```powershell
+Push-Location experiments/dinov2_duplicate_fix
+..\..\.venv\Scripts\python.exe -m pytest
+..\..\.venv\Scripts\python.exe -m src.test_study_model --help
+Pop-Location
+```
+
+원본 이미지, 체크포인트, 임베딩 캐시와 상세 감사 파일은 Drive 또는 로컬 출력 경로에서 관리합니다. 결과 ZIP의 전체 내용은 로컬 `outputs/results/dinov2-duplicate-fix-1121-01/`에 풀었습니다.

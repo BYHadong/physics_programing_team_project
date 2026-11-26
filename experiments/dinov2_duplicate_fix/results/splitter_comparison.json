@@ -1,0 +1,70 @@
+[
+  {
+    "method": "GroupKFold",
+    "fold_count": 5,
+    "valid": true,
+    "imbalance": 0.03045736689002275,
+    "candidate_count": 1,
+    "validation_counts": [
+      {
+        "etc_cats": 77,
+        "main_siamese_cat": 13,
+        "other_siamese_cat": 94
+      },
+      {
+        "etc_cats": 77,
+        "main_siamese_cat": 15,
+        "other_siamese_cat": 92
+      },
+      {
+        "etc_cats": 75,
+        "main_siamese_cat": 17,
+        "other_siamese_cat": 91
+      },
+      {
+        "etc_cats": 78,
+        "main_siamese_cat": 5,
+        "other_siamese_cat": 100
+      },
+      {
+        "etc_cats": 78,
+        "main_siamese_cat": 7,
+        "other_siamese_cat": 98
+      }
+    ]
+  },
+  {
+    "method": "StratifiedGroupKFold",
+    "fold_count": 5,
+    "valid": true,
+    "imbalance": 0.04217777672325368,
+    "candidate_count": 12,
+    "validation_counts": [
+      {
+        "etc_cats": 78,
+        "main_siamese_cat": 9,
+        "other_siamese_cat": 62
+      },
+      {
+        "etc_cats": 78,
+        "main_siamese_cat": 9,
+        "other_siamese_cat": 95
+      },
+      {
+        "etc_cats": 72,
+        "main_siamese_cat": 9,
+        "other_siamese_cat": 133
+      },
+      {
+        "etc_cats": 76,
+        "main_siamese_cat": 14,
+        "other_siamese_cat": 127
+      },
+      {
+        "etc_cats": 81,
+        "main_siamese_cat": 16,
+        "other_siamese_cat": 58
+      }
+    ]
+  }
+]

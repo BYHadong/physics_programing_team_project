@@ -1,0 +1,110 @@
+{
+  "E00_holdout_accuracy": {
+    "reference": 0.8088,
+    "observations": [
+      {
+        "source": "/content/drive/MyDrive/Cat_Project_Backup/results/dinov2-1121-01/final_model_metrics.json",
+        "value": 0.8088235294117647
+      },
+      {
+        "source": "/content/drive/MyDrive/Cat_Project_Backup/results/dinov2-1121-01/baseline_comparison.csv",
+        "value": 0.8088235294117647
+      }
+    ],
+    "matches_rounded_reference": true
+  },
+  "E15_holdout_accuracy": {
+    "reference": 0.9363,
+    "observations": [
+      {
+        "source": "/content/drive/MyDrive/Cat_Project_Backup/results/dinov2-1121-01/final_model_metrics.json",
+        "value": 0.9362745098039216
+      },
+      {
+        "source": "/content/drive/MyDrive/Cat_Project_Backup/results/dinov2-1121-01/baseline_comparison.csv",
+        "value": 0.9362745098039216
+      }
+    ],
+    "matches_rounded_reference": true
+  },
+  "E00_holdout_f1": {
+    "reference": 0.6061,
+    "observations": [
+      {
+        "source": "/content/drive/MyDrive/Cat_Project_Backup/results/dinov2-1121-01/final_model_metrics.json",
+        "value": 0.6060606060606061
+      },
+      {
+        "source": "/content/drive/MyDrive/Cat_Project_Backup/results/dinov2-1121-01/baseline_comparison.csv",
+        "value": 0.6060606060606061
+      }
+    ],
+    "matches_rounded_reference": true
+  },
+  "E15_holdout_f1": {
+    "reference": 0.8116,
+    "observations": [
+      {
+        "source": "/content/drive/MyDrive/Cat_Project_Backup/results/dinov2-1121-01/final_model_metrics.json",
+        "value": 0.8115942028985508
+      },
+      {
+        "source": "/content/drive/MyDrive/Cat_Project_Backup/results/dinov2-1121-01/baseline_comparison.csv",
+        "value": 0.8115942028985508
+      }
+    ],
+    "matches_rounded_reference": true
+  },
+  "E15_random_accuracy": {
+    "reference": 0.9333,
+    "observations": [
+      {
+        "source": "/content/drive/MyDrive/Cat_Project_Backup/graphs/dinov2-1121-01/sample_tests/images-bmn7s0gv/20261126T064728-321ac118/random_samples.json",
+        "value": 0.9333333333333333,
+        "checkpoint_identity_proven": false
+      },
+      {
+        "source": "/content/drive/MyDrive/Cat_Project_Backup/graphs/dinov2-1121-01/sample_tests/images-et82cvm4/20261126T073406-f9201a44/random_samples.json",
+        "value": 0.9333333333333333,
+        "checkpoint_identity_proven": false
+      },
+      {
+        "source": "/content/drive/MyDrive/Cat_Project_Backup/graphs/dinov2-1121-01/sample_tests/images-qn03v5bm/20261126T073046-bb2d721f/random_samples.json",
+        "value": 0.9333333333333333,
+        "checkpoint_identity_proven": false
+      }
+    ],
+    "matches_rounded_reference": null
+  },
+  "E15_strict_accuracy": {
+    "reference": 0.8667,
+    "observations": [],
+    "matches_rounded_reference": null
+  },
+  "E15_random_hard_siamese_accuracy": {
+    "reference": 0.9,
+    "observations": [
+      {
+        "source": "/content/drive/MyDrive/Cat_Project_Backup/graphs/dinov2-1121-01/sample_tests/images-bmn7s0gv/20261126T064728-321ac118/random_samples.json",
+        "value": 0.9,
+        "checkpoint_identity_proven": false
+      },
+      {
+        "source": "/content/drive/MyDrive/Cat_Project_Backup/graphs/dinov2-1121-01/sample_tests/images-et82cvm4/20261126T073406-f9201a44/random_samples.json",
+        "value": 0.9,
+        "checkpoint_identity_proven": false
+      },
+      {
+        "source": "/content/drive/MyDrive/Cat_Project_Backup/graphs/dinov2-1121-01/sample_tests/images-qn03v5bm/20261126T073046-bb2d721f/random_samples.json",
+        "value": 0.9,
+        "checkpoint_identity_proven": false
+      }
+    ],
+    "matches_rounded_reference": null
+  },
+  "E15_strict_hard_siamese_accuracy": {
+    "reference": 0.8,
+    "observations": [],
+    "matches_rounded_reference": null
+  }
+}

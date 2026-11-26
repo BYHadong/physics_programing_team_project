@@ -1,0 +1,41 @@
+{
+  "dhash_le_4": {
+    "pairs": 15,
+    "cross_fold": 0,
+    "cross_holdout": 0,
+    "cross_class": 0,
+    "unreviewed_cross_partition": 0
+  },
+  "dhash_le_8": {
+    "pairs": 34,
+    "cross_fold": 2,
+    "cross_holdout": 0,
+    "cross_class": 1,
+    "unreviewed_cross_partition": 2
+  },
+  "cosine_ge_0.95": {
+    "pairs": 67,
+    "cross_fold": 2,
+    "cross_holdout": 0,
+    "cross_class": 0,
+    "unreviewed_cross_partition": 2
+  },
+  "cosine_ge_0.98": {
+    "pairs": 19,
+    "cross_fold": 0,
+    "cross_holdout": 0,
+    "cross_class": 0,
+    "unreviewed_cross_partition": 0
+  },
+  "cosine_ge_0.995": {
+    "pairs": 6,
+    "cross_fold": 0,
+    "cross_holdout": 0,
+    "cross_class": 0,
+    "unreviewed_cross_partition": 0
+  },
+  "priority_cross_partition": {
+    "pairs": 0,
+    "unreviewed": 0
+  }
+}
