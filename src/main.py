@@ -2,9 +2,8 @@ import sys
 from pathlib import Path
 
 # Add src to sys.path if executed directly
-current_dir = Path(__file__).resolve().parent
-if str(current_dir.parent) not in sys.path:
-    sys.path.insert(0, str(current_dir.parent))
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import (
     BASE_DIR,
@@ -14,11 +13,12 @@ from src.config import (
     GDRIVE_DATA_FOLDER_ID,
     GDRIVE_CATEGORIES,
 )
-from src.drive_sync import check_gdrive_cli, list_team_datasets
+from src.drive_sync import check_gdrive_cli
 from src.dataset import CatDataset
 
 
-def main():
+def main() -> None:
+    """로컬 프로젝트와 Drive CLI 상태를 표시합니다."""
     print("=" * 60)
     print("  물리와 프로그래밍 6조 팀 프로젝트 - 환경 점검 및 시작")
     print("=" * 60)

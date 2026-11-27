@@ -1,5 +1,3 @@
-import os
-from pathlib import Path
 from src.config import BASE_DIR, DATA_DIR, RAW_DATA_DIR, GDRIVE_CATEGORIES
 from src.dataset import CatDataset
 

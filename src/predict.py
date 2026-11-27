@@ -3,25 +3,69 @@
 """
 
 import argparse
-from pathlib import Path
+import json
 import sys
+from pathlib import Path
 from typing import Dict, Optional
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-from ultralytics import YOLO
+from PIL import Image
+from scipy.special import expit
 
-try:
-    from src.config import CHECKPOINTS_DIR, YOLO_WEIGHTS_PATH
-    from src.dataset import build_transforms, letterbox_square
-    from src.preprocess import crop_cat_with_yolo, load_exif_corrected_rgb
-    from src.train_baseline import load_backbone
-except ImportError:
-    from config import CHECKPOINTS_DIR, YOLO_WEIGHTS_PATH
-    from dataset import build_transforms, letterbox_square
-    from preprocess import crop_cat_with_yolo, load_exif_corrected_rgb
-    from train_baseline import load_backbone
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from src.config import (
+    CHECKPOINTS_DIR,
+    CROP_INTEGRITY_FILENAME,
+    PROCESSED_DATA_DIR,
+    YOLO_WEIGHTS_PATH,
+)
+from src.dataset import build_transforms, letterbox_square
+from src.embedding_cache import backbone_digest
+from src.experiment_splits import (
+    load_manifest,
+    matching_record,
+    processed_path,
+    source_index,
+    source_key,
+)
+from src.preprocess import crop_cat_with_yolo, load_exif_corrected_rgb
+from src.study_audit import file_sha256
+from src.train_baseline import load_backbone
+
+
+def load_checkpoint_backbone(ckpt: Dict, device: torch.device) -> torch.nn.Module:
+    """체크포인트가 참조하는 동결 백본을 로드하고 저장된 가중치 해시를 확인합니다."""
+    model, _ = load_backbone(ckpt["backbone_id"], device)
+    expected = ckpt.get("backbone_weights_sha256")
+    if expected and backbone_digest(model) != expected:
+        raise ValueError("체크포인트 학습 때 사용한 동결 백본과 현재 가중치가 다릅니다.")
+    return model
+
+
+def verified_crop_record(image: Path, processed: Path, source: Path | None = None) -> dict:
+    """동일 상대 이름만으로 외부 이미지의 크롭을 잘못 선택하지 않도록 대조합니다."""
+    rows = load_manifest(processed / "manifest.json", require_other_ids=False)
+    row = matching_record(image, rows)
+    key = source_key(row["source_path"], row["class_name"])
+    sidecar = processed / CROP_INTEGRITY_FILENAME
+    if sidecar.is_file():
+        proof = json.loads(sidecar.read_text("utf-8"))["sources"].get(key)
+        if (
+            not proof
+            or file_sha256(image) != proof["raw_sha256"]
+            or file_sha256(processed_path(processed, row["processed_rel_path"]))
+            != proof["crop_sha256"]
+        ):
+            raise ValueError("입력 또는 크롭의 SHA-256이 Manifest의 원본과 다릅니다.")
+    else:
+        origin = source_index(source).get(key) if source is not None else Path(row["source_path"])
+        if origin is None or origin.resolve() != image.resolve():
+            raise ValueError("입력과 연결된 기존 크롭 경로를 확인할 수 없습니다.")
+    return row
 
 
 def predict_image(
@@ -32,6 +76,8 @@ def predict_image(
     backbone_model: Optional[torch.nn.Module] = None,
     device: Optional[torch.device] = None,
     return_crop: bool = False,
+    processed_record: Optional[Dict] = None,
+    processed_dir: Path = PROCESSED_DATA_DIR,
 ) -> Dict:
     """
     단일 이미지 파일에 대해 전처리, YOLO 크롭 및 학습된 베이스라인 모델로 판별을 수행합니다.
@@ -44,6 +90,8 @@ def predict_image(
         backbone_model: 사전 로드된 백본 모델 (배치 추론 재사용용)
         device: 연산 장치 (미지정 시 자동 선택)
         return_crop: True면 반환 딕셔너리에 크롭·패딩된 PIL 이미지(square_img)를 포함
+        processed_record: 이미 처리한 이미지의 Manifest 행
+        processed_dir: 기존 전처리 이미지 폴더
 
     반환값:
         판별 결과, 확률, 코사인 유사도, 사용 임계값 등 메타데이터 딕셔너리
@@ -62,24 +110,34 @@ def predict_image(
             )
         ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
 
-    backbone_id = ckpt["backbone_id"]
     image_size = int(ckpt["image_size"])
     preprocessed_size = int(ckpt.get("preprocessed_size", 512))
     method = ckpt["method"]
     threshold = float(ckpt["threshold"])
 
     # 1. EXIF 보정 + YOLO 고양이 크롭 + 정사각형 패딩
-    pil_img = load_exif_corrected_rgb(image_path)
-    if yolo_model is None:
-        yolo_model = YOLO(str(YOLO_WEIGHTS_PATH))
-    cropped, detected, bbox, det_conf = crop_cat_with_yolo(pil_img, yolo_model)
-    square_img = letterbox_square(cropped, preprocessed_size)
+    if processed_record is None:
+        if yolo_model is None:
+            from ultralytics import YOLO
+
+            yolo_model = YOLO(str(YOLO_WEIGHTS_PATH))
+        pil_img = load_exif_corrected_rgb(image_path)
+        cropped, detected, bbox, det_conf = crop_cat_with_yolo(pil_img, yolo_model)
+        square_img = letterbox_square(cropped, preprocessed_size)
+    else:
+        with Image.open(
+            processed_path(processed_dir, processed_record["processed_rel_path"])
+        ) as img:
+            square_img = img.convert("RGB")
+        detected = bool(processed_record.get("yolo_detected"))
+        bbox = processed_record.get("yolo_bbox")
+        det_conf = processed_record.get("yolo_conf")
 
     # 2. 백본 임베딩 추출
     eval_transform = build_transforms(image_size=image_size, is_train=False)
     tensor_img = eval_transform(square_img).unsqueeze(0).to(device)
 
-    model = backbone_model if backbone_model is not None else load_backbone(backbone_id, device)[0]
+    model = backbone_model if backbone_model is not None else load_checkpoint_backbone(ckpt, device)
     with torch.no_grad():
         with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
             feats = model(tensor_img)
@@ -90,10 +148,10 @@ def predict_image(
     prototype = np.asarray(ckpt["prototype"], dtype=np.float32)
     cosine_sim = float(np.dot(emb, prototype))
 
-    coef = np.asarray(ckpt["linear_coef"], dtype=np.float32)
+    coef = np.asarray(ckpt["linear_coef"], dtype=np.float64)
     intercept = float(ckpt["linear_intercept"])
     logit = float(np.dot(emb, coef) + intercept)
-    prob = float(1.0 / (1.0 + np.exp(-np.clip(logit, -50.0, 50.0))))
+    prob = float(expit(logit))
 
     score = prob if method == "linear_probe" else cosine_sim
     is_main_cat = score >= threshold
@@ -127,14 +185,23 @@ def main() -> None:
         default=CHECKPOINTS_DIR / "best_baseline.pt",
         help="체크포인트 파일 경로",
     )
+    parser.add_argument("--processed", type=Path, default=PROCESSED_DATA_DIR)
+    parser.add_argument("--source", type=Path, help="이전 Manifest 원본 루트가 바뀐 경우 지정")
+    parser.add_argument("--reuse-processed", action="store_true", help="기존 Manifest 크롭 사용")
     args = parser.parse_args()
-
-    res = predict_image(args.image_path, args.checkpoint)
+    record = None
+    if args.reuse_processed:
+        record = verified_crop_record(args.image_path, args.processed, args.source)
+    res = predict_image(
+        args.image_path, args.checkpoint, processed_record=record, processed_dir=args.processed
+    )
     print("=" * 60)
     print(f"[입력 파일]     {res['image_path']}")
     print(f"[사용 모델]     {res['backbone_key']} ({res['method']})")
-    print(f"[YOLO 탐지]     {'성공' if res['yolo_detected'] else '미탐지(원본 사용)'} "
-          f"(conf={res['yolo_conf']})")
+    print(
+        f"[YOLO 탐지]     {'성공' if res['yolo_detected'] else '미탐지(원본 사용)'} "
+        f"(conf={res['yolo_conf']})"
+    )
     print("-" * 60)
     print(f"[판정 결과]     {res['prediction']}")
     print(f"[판정 점수]     {res['score']:.4f} (기준 임계값: {res['threshold']:.4f})")

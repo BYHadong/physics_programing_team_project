@@ -15,6 +15,8 @@ from torchvision import transforms
 
 try:
     from src.config import (
+        DEFAULT_HFLIP_PROBABILITY,
+        DEFAULT_ROTATION_DEGREES,
         GDRIVE_CATEGORIES,
         IMAGE_SIZE,
         IMAGENET_MEAN,
@@ -25,6 +27,8 @@ try:
     )
 except ImportError:
     from config import (
+        DEFAULT_HFLIP_PROBABILITY,
+        DEFAULT_ROTATION_DEGREES,
         GDRIVE_CATEGORIES,
         IMAGE_SIZE,
         IMAGENET_MEAN,
@@ -104,6 +108,10 @@ def build_transforms(
     image_size: int = 224,
     is_train: bool = True,
     enable_hflip: bool = True,
+    rotation_degrees: float = DEFAULT_ROTATION_DEGREES,
+    hflip_probability: float = DEFAULT_HFLIP_PROBABILITY,
+    *,
+    fixed_hflip: Optional[bool] = None,
 ) -> transforms.Compose:
     """
     학습용(온라인 증강 포함) 및 검증/추론용 이미지 전처리 파이프라인을 생성합니다.
@@ -112,6 +120,9 @@ def build_transforms(
         image_size: 모델 입력 해상도 (정사각형)
         is_train: True면 온라인 데이터 증강 적용, False면 평가용 변환만 적용
         enable_hflip: 학습 시 좌우 반전 증강 사용 여부
+        rotation_degrees: 양방향 최대 회전 각도
+        hflip_probability: 학습 시 좌우 반전 확률
+        fixed_hflip: 캐시에서 확률 추출을 마친 경우 적용할 반전 결과
 
     반환값:
         torchvision.transforms.Compose 객체
@@ -130,11 +141,13 @@ def build_transforms(
             ratio=(0.85, 1.15),
         ),
     ]
-    if enable_hflip:
-        ops.append(transforms.RandomHorizontalFlip(p=0.5))
+    if fixed_hflip is True:
+        ops.append(transforms.Lambda(transforms.functional.hflip))
+    elif fixed_hflip is None and enable_hflip:
+        ops.append(transforms.RandomHorizontalFlip(p=hflip_probability))
 
     ops.extend([
-        transforms.RandomRotation(degrees=15),
+        transforms.RandomRotation(degrees=rotation_degrees),
         transforms.ColorJitter(brightness=0.25, contrast=0.25, saturation=0.15, hue=0.02),
         transforms.RandomApply([transforms.GaussianBlur(kernel_size=3)], p=0.3),
         RandomJPEGCompression(min_quality=50, max_quality=95, p=0.4),
@@ -253,17 +266,19 @@ def create_group_folds(
     records: List[Dict],
     n_splits: int = 5,
     seed: int = RANDOM_SEED,
+    record_groups: Optional[Dict[str, str]] = None,
 ) -> List[Tuple[List[Dict], List[Dict]]]:
     """
     데이터 누수를 방지하기 위해 클래스 특성에 맞춰 5-Fold 교차 검증 분할을 생성합니다.
-    - main_siamese_cat: KFold
+    - main_siamese_cat: 확인된 촬영 그룹이 있으면 GroupKFold, 없으면 KFold
     - other_siamese_cat: individual_id 기준 GroupKFold (검증 시 미확인 개체만 평가)
-    - etc_cats: KFold
+    - etc_cats: 확인된 중복 그룹이 있으면 GroupKFold, 없으면 KFold
 
     매개변수:
         records: manifest.json의 전체 레코드 리스트
         n_splits: Fold 개수 (기본 5)
         seed: 난수 시드
+        record_groups: 확인된 촬영 단위와 중복을 반영한 전처리 경로별 그룹
 
     반환값:
         [(train_records, val_records), ...] 길이 n_splits의 리스트
@@ -289,10 +304,9 @@ def create_group_folds(
         kf = KFold(n_splits=n_splits, shuffle=True, random_state=seed)
         return [([bucket[i] for i in tr], [bucket[i] for i in va]) for tr, va in kf.split(bucket)]
 
-    def _split_group(bucket: List[Dict]) -> List[Tuple[List[Dict], List[Dict]]]:
+    def _split_group(bucket: List[Dict], groups: List[str]) -> List[Tuple[List[Dict], List[Dict]]]:
         if not bucket:
             return [([], []) for _ in range(n_splits)]
-        groups = [r.get("individual_id", "unknown") for r in bucket]
         unique_groups = sorted(set(groups))
         if len(unique_groups) < n_splits:
             group_to_fold = {g: i % n_splits for i, g in enumerate(unique_groups)}
@@ -308,9 +322,24 @@ def create_group_folds(
             for tr, va in gkf.split(bucket, groups=groups)
         ]
 
-    main_splits = _split_kfold(main_recs)
-    other_splits = _split_group(other_recs)
-    etc_splits = _split_kfold(etc_recs)
+    def _split_verified(
+        bucket: List[Dict], other: bool = False,
+    ) -> List[Tuple[List[Dict], List[Dict]]]:
+        """확인된 그룹이 있으면 그룹을 유지하고 독립 행은 기존 방식으로 분할합니다."""
+        if record_groups is None:
+            if other:
+                return _split_group(
+                    bucket, [record.get("individual_id", "unknown") for record in bucket]
+                )
+            return _split_kfold(bucket)
+        groups = [record_groups[record["processed_rel_path"]] for record in bucket]
+        if other or len(set(groups)) < len(groups):
+            return _split_group(bucket, groups)
+        return _split_kfold(bucket)
+
+    main_splits = _split_verified(main_recs)
+    other_splits = _split_verified(other_recs, other=True)
+    etc_splits = _split_verified(etc_recs)
     extra_splits = _split_kfold(extra_recs)
 
     folds: List[Tuple[List[Dict], List[Dict]]] = []

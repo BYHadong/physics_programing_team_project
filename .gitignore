@@ -38,15 +38,31 @@ env/
 
 # Data and large files (Google Drive sync target)
 데이터/
+main_siamese_cat/
+other_siamese_cat/
+etc_cats/
 data/raw/*
 data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+processed_*/
+processed*.zip
+
+# Model weights, features and run outputs
+Cat_Project_Backup/
 checkpoints/
 outputs/
+embeddings/
+experiments/
+results/
+graphs/
 *.pt
 *.pth
 *.onnx
+*.ckpt
+*.safetensors
+*.npy
+*.npz
 
 # Environment variables & secrets
 .env

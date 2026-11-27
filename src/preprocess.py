@@ -172,8 +172,6 @@ def run_preprocessing(
     반환값:
         생성된 manifest 레코드 리스트
     """
-    from ultralytics import YOLO
-
     source_dir = Path(source_dir)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -186,29 +184,38 @@ def run_preprocessing(
     print(f"[전처리 시작] 원본 경로: {source_dir}")
     print(f"[전처리 대상] 총 {len(items)}장 | YOLO 가중치: {YOLO_WEIGHTS_PATH}")
 
-    yolo_model = YOLO(str(YOLO_WEIGHTS_PATH))
-
     existing_by_source: Dict[str, Dict] = {}
     if manifest_path.exists() and not force:
         with open(manifest_path, "r", encoding="utf-8") as f:
             for rec in json.load(f):
                 existing_by_source[rec["source_path"]] = rec
 
+    reusable = {}
+    for src_path, _, _ in items:
+        cached = existing_by_source.get(str(src_path))
+        if cached is not None and (output_dir / cached["processed_rel_path"]).is_file():
+            reusable[str(src_path)] = cached
+
     records: List[Dict] = []
-    used_rel_paths: set = set()
+    # 새 사진의 파일명이 먼저 정렬돼도 기존 크롭의 이름을 보호합니다.
+    used_rel_paths = {rec["processed_rel_path"] for rec in reusable.values()}
     stats = defaultdict(lambda: {"total": 0, "detected": 0})
+    yolo_model = None
 
     for src_path, cls_name, individual_id in tqdm(items, desc="YOLO 크롭 및 전처리"):
         src_str = str(src_path)
-        if not force and src_str in existing_by_source:
-            cached = existing_by_source[src_str]
-            if (output_dir / cached["processed_rel_path"]).exists():
-                records.append(cached)
-                used_rel_paths.add(cached["processed_rel_path"])
-                stats[cls_name]["total"] += 1
-                if cached.get("yolo_detected"):
-                    stats[cls_name]["detected"] += 1
-                continue
+        cached = reusable.get(src_str)
+        if cached is not None:
+            records.append(cached)
+            stats[cls_name]["total"] += 1
+            if cached.get("yolo_detected"):
+                stats[cls_name]["detected"] += 1
+            continue
+
+        if yolo_model is None:
+            from ultralytics import YOLO
+
+            yolo_model = YOLO(str(YOLO_WEIGHTS_PATH))
 
         pil_img = load_exif_corrected_rgb(src_path)
         orig_w, orig_h = pil_img.size

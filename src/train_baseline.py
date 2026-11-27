@@ -27,6 +27,7 @@ from torch.utils.data import DataLoader
 
 try:
     from src.config import (
+        BACKBONE_INPUT_SIZE,
         BACKBONE_MODELS,
         BATCH_SIZE,
         CHECKPOINTS_DIR,
@@ -43,6 +44,7 @@ try:
     )
 except ImportError:
     from config import (
+        BACKBONE_INPUT_SIZE,
         BACKBONE_MODELS,
         BATCH_SIZE,
         CHECKPOINTS_DIR,
@@ -80,7 +82,7 @@ def load_backbone(model_name_or_id: str, device: torch.device) -> Tuple[torch.nn
         (동결된 eval 모델, 입력 이미지 크기)
     """
     model_id = BACKBONE_MODELS.get(model_name_or_id, model_name_or_id)
-    target_size = 224
+    target_size = BACKBONE_INPUT_SIZE
 
     try:
         model = timm.create_model(
@@ -452,6 +454,14 @@ def train_and_save_best_model(
         "preprocessed_size": PREPROCESSED_SIZE,
         "method": best_method,
         "main_target_count": main_target_count,
+        "hyperparameters": {
+            "c": 1.0,
+            "main_target_count": main_target_count,
+            "positive_aug_passes": 7,
+            "neg_aug_passes": len(neg_aug_list),
+            "rotation_degrees": 15.0,
+            "hflip_probability": 0.5 if enable_hflip else 0.0,
+        },
         "threshold": float(best_metrics["threshold"]),
         "prototype": proto_vec.astype(np.float32),
         "linear_coef": clf.coef_[0].astype(np.float32),
